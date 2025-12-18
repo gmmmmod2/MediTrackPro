@@ -1,0 +1,114 @@
+// Prisma Schema for MediTrack Pro
+// 使用 Neon Postgres (通过 Vercel Marketplace)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+// ==================== 用户表 ====================
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  password  String
+  name      String
+  role      Role     @default(PHARMACIST)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 关联
+  createdDrugs  Drug[]       @relation("CreatedBy")
+  deletedDrugs  Drug[]       @relation("DeletedBy")
+  modifications ModificationLog[]
+  sales         SaleRecord[] @relation("Cashier")
+
+  @@map("users")
+}
+
+enum Role {
+  ADMIN
+  PHARMACIST
+}
+
+// ==================== 药品表 ====================
+model Drug {
+  id                String   @id @default(cuid())
+  code              String   @unique
+  name              String
+  category          String
+  manufacturer      String
+  price             Float
+  stock             Int
+  minStockThreshold Int      @default(10)
+  expiryDate        DateTime
+  description       String?
+  sideEffects       String?
+  isLocked          Boolean  @default(false)
+  isDeleted         Boolean  @default(false)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  // 关联
+  createdBy   User?   @relation("CreatedBy", fields: [createdById], references: [id])
+  createdById String?
+  deletedBy   User?   @relation("DeletedBy", fields: [deletedById], references: [id])
+  deletedById String?
+
+  history   ModificationLog[]
+  saleItems SaleItem[]
+
+  @@map("drugs")
+}
+
+// ==================== 修改历史表 ====================
+model ModificationLog {
+  id        String   @id @default(cuid())
+  timestamp DateTime @default(now())
+  changes   Json
+
+  // 关联
+  drug        Drug   @relation(fields: [drugId], references: [id], onDelete: Cascade)
+  drugId      String
+  changedBy   User   @relation(fields: [changedById], references: [id])
+  changedById String
+
+  @@map("modification_logs")
+}
+
+// ==================== 销售记录表 ====================
+model SaleRecord {
+  id           String   @id @default(cuid())
+  timestamp    DateTime @default(now())
+  totalAmount  Float
+  customerName String?
+
+  // 关联
+  cashier   User   @relation("Cashier", fields: [cashierId], references: [id])
+  cashierId String
+  items     SaleItem[]
+
+  @@map("sale_records")
+}
+
+// ==================== 销售明细表 ====================
+model SaleItem {
+  id          String @id @default(cuid())
+  quantity    Int
+  priceAtSale Float
+  total       Float
+
+  // 关联
+  saleRecord   SaleRecord @relation(fields: [saleRecordId], references: [id], onDelete: Cascade)
+  saleRecordId String
+  drug         Drug       @relation(fields: [drugId], references: [id])
+  drugId       String
+
+  @@map("sale_items")
+}

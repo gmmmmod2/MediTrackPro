@@ -1,12 +1,18 @@
 {
-  "name": "meditrack-pro---pharmacy-management",
+  "name": "meditrack-pro",
   "private": true,
-  "version": "0.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "db:studio": "prisma studio",
+    "db:seed": "npx tsx prisma/seed.ts",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "lucide-react": "^0.555.0",
@@ -15,12 +21,19 @@
     "react": "^19.2.0",
     "react-router-dom": "^7.10.0",
     "react-dom": "^19.2.0",
-    "react-hot-toast": "^2.6.0"
+    "react-hot-toast": "^2.6.0",
+    "@prisma/client": "^5.22.0",
+    "@vercel/postgres": "^0.10.0",
+    "bcryptjs": "^2.4.3",
+    "jose": "^5.9.6"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "@types/bcryptjs": "^2.4.6",
     "@vitejs/plugin-react": "^5.0.0",
+    "prisma": "^5.22.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "tsx": "^4.19.0"
   }
 }

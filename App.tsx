@@ -1,8 +1,13 @@
-
 import React, { useState, useEffect, createContext, useContext } from 'react';
-import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Drug, SaleRecord, User, FieldChange, ModificationLog } from './types';
-import { dataService } from './services/dataService';
+import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { Drug, SaleRecord, User, SaleItem } from './types';
+import { 
+  drugService, 
+  salesService, 
+  userService, 
+  authService, 
+  getStoredUser 
+} from './services/dataService';
 import { Layout } from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import Inventory from './pages/Inventory';
@@ -10,6 +15,17 @@ import Sales from './pages/Sales';
 import Login from './pages/Login';
 import Profile from './pages/Profile';
 import { Toaster } from 'react-hot-toast';
+import toast from 'react-hot-toast';
+
+// --- Loading Spinner Component ---
+const LoadingSpinner: React.FC = () => (
+  <div className="min-h-screen flex items-center justify-center bg-slate-100">
+    <div className="text-center">
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+      <p className="text-slate-600">加载中...</p>
+    </div>
+  </div>
+);
 
 // --- Context Setup ---
 interface PharmacyContextType {
@@ -19,17 +35,18 @@ interface PharmacyContextType {
   drugs: Drug[];
   deletedDrugs: Drug[];
   sales: SaleRecord[];
-  addDrug: (d: Drug) => void;
-  batchAddDrugs: (d: Drug[]) => void;
-  updateDrug: (d: Drug) => void;
-  deleteDrug: (id: string) => void;
-  batchDeleteDrugs: (ids: string[]) => void;
-  restoreDrug: (id: string) => void;
-  permanentlyDeleteDrug: (id: string) => void;
-  toggleDrugLock: (id: string) => void;
-  recordSale: (s: SaleRecord) => void;
-  refreshData: () => void;
-  updateUser: (u: User) => void;
+  loading: boolean;
+  addDrug: (d: Omit<Drug, 'id' | 'history'>) => Promise<void>;
+  batchAddDrugs: (d: Omit<Drug, 'id' | 'history'>[]) => Promise<void>;
+  updateDrug: (d: Drug) => Promise<void>;
+  deleteDrug: (id: string) => Promise<void>;
+  batchDeleteDrugs: (ids: string[]) => Promise<void>;
+  restoreDrug: (id: string) => Promise<void>;
+  permanentlyDeleteDrug: (id: string) => Promise<void>;
+  toggleDrugLock: (id: string) => Promise<void>;
+  recordSale: (sale: SaleRecord) => Promise<void>;
+  refreshData: () => Promise<void>;
+  updateUser: (u: User) => Promise<void>;
 }
 
 const PharmacyContext = createContext<PharmacyContextType | null>(null);
@@ -45,180 +62,243 @@ const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ children })
   const [drugs, setDrugs] = useState<Drug[]>([]);
   const [deletedDrugs, setDeletedDrugs] = useState<Drug[]>([]);
   const [sales, setSales] = useState<SaleRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [initialCheckDone, setInitialCheckDone] = useState(false);
 
-  // Initialize data
+  // 初始化：检查本地存储的用户登录状态
   useEffect(() => {
-    refreshData();
+    const checkAuth = () => {
+      const storedUser = getStoredUser();
+      if (storedUser && authService.isAuthenticated()) {
+        setUser(storedUser);
+      }
+      setInitialCheckDone(true);
+      setLoading(false);
+    };
+    checkAuth();
   }, []);
 
-  const refreshData = () => {
-    setDrugs(dataService.getDrugs());
-    setDeletedDrugs(dataService.getDeletedDrugs());
-    setSales(dataService.getSales());
-  };
+  // 当用户登录后加载数据
+  useEffect(() => {
+    if (user && initialCheckDone) {
+      refreshData();
+    }
+  }, [user, initialCheckDone]);
 
-  const login = (u: User) => setUser(u);
-  const logout = () => setUser(null);
-
-  const addDrug = (drug: Drug) => {
-    const drugWithHistory = { ...drug, history: [] };
-    const newDrugs = [...drugs, drugWithHistory];
-    setDrugs(newDrugs);
-    dataService.saveDrugs(newDrugs);
-  };
-
-  const batchAddDrugs = (newDrugsList: Drug[]) => {
-    const processedList = newDrugsList.map(d => ({ ...d, history: [] }));
-    const newDrugs = [...drugs, ...processedList];
-    setDrugs(newDrugs);
-    dataService.saveDrugs(newDrugs);
-  };
-
-  const updateDrug = (updatedDrug: Drug) => {
-    const originalDrug = drugs.find(d => d.id === updatedDrug.id);
+  // 刷新所有数据
+  const refreshData = async () => {
+    if (!user) return;
     
-    if (originalDrug) {
-      // Calculate changes
-      const changes: FieldChange[] = [];
-      const fieldsToCheck: (keyof Drug)[] = ['name', 'code', 'category', 'manufacturer', 'price', 'stock', 'minStockThreshold', 'expiryDate', 'description', 'sideEffects'];
+    setLoading(true);
+    try {
+      const [drugsData, deletedDrugsData, salesData] = await Promise.all([
+        drugService.getDrugs(),
+        drugService.getDeletedDrugs(),
+        salesService.getSales(),
+      ]);
+      setDrugs(drugsData);
+      setDeletedDrugs(deletedDrugsData);
+      setSales(salesData);
+    } catch (error: any) {
+      console.error('加载数据失败:', error);
+      // 如果是认证错误，不显示 toast（会自动跳转登录）
+      if (!error.message?.includes('登录')) {
+        toast.error(error.message || '数据加载失败');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 登录
+  const login = (u: User) => {
+    setUser(u);
+  };
+  
+  // 登出
+  const logout = () => {
+    authService.logout();
+    setUser(null);
+    setDrugs([]);
+    setDeletedDrugs([]);
+    setSales([]);
+  };
+
+  // 添加单个药品
+  const addDrug = async (drug: Omit<Drug, 'id' | 'history'>) => {
+    try {
+      const newDrug = await drugService.addDrug(drug);
+      setDrugs(prev => [newDrug, ...prev]);
+    } catch (error: any) {
+      toast.error(error.message || '添加失败');
+      throw error;
+    }
+  };
+
+  // 批量添加药品
+  const batchAddDrugs = async (newDrugsList: Omit<Drug, 'id' | 'history'>[]) => {
+    try {
+      const addedDrugs = await drugService.batchAddDrugs(newDrugsList);
+      setDrugs(prev => [...addedDrugs, ...prev]);
+    } catch (error: any) {
+      toast.error(error.message || '批量添加失败');
+      throw error;
+    }
+  };
+
+  // 更新药品
+  const updateDrug = async (updatedDrug: Drug) => {
+    try {
+      const updated = await drugService.updateDrug(updatedDrug);
+      setDrugs(prev => prev.map(d => d.id === updated.id ? updated : d));
+    } catch (error: any) {
+      toast.error(error.message || '更新失败');
+      throw error;
+    }
+  };
+
+  // 删除药品（移至回收站）
+  const deleteDrug = async (id: string) => {
+    try {
+      await drugService.deleteDrug(id);
+      const drugToMove = drugs.find(d => d.id === id);
+      setDrugs(prev => prev.filter(d => d.id !== id));
+      if (drugToMove) {
+        const deletedDrug = { 
+          ...drugToMove, 
+          deletedAt: new Date().toISOString(), 
+          deletedBy: user?.name 
+        };
+        setDeletedDrugs(prev => [deletedDrug, ...prev]);
+      }
+    } catch (error: any) {
+      toast.error(error.message || '删除失败');
+      throw error;
+    }
+  };
+
+  // 批量删除药品
+  const batchDeleteDrugs = async (ids: string[]) => {
+    try {
+      const result = await drugService.batchDeleteDrugs(ids);
+      const drugsToMove = drugs.filter(d => ids.includes(d.id));
+      setDrugs(prev => prev.filter(d => !ids.includes(d.id)));
       
-      fieldsToCheck.forEach(field => {
-        if (originalDrug[field] !== updatedDrug[field]) {
-           // Basic comparison (strict equality works for primitives in Drug)
-           changes.push({
-             field: field as string,
-             oldValue: originalDrug[field],
-             newValue: updatedDrug[field]
-           });
+      const now = new Date().toISOString();
+      const deletedItems = drugsToMove.map(d => ({ 
+        ...d, 
+        deletedAt: now, 
+        deletedBy: user?.name 
+      }));
+      setDeletedDrugs(prev => [...deletedItems, ...prev]);
+      
+      toast.success(`成功删除 ${result.count} 个药品`);
+    } catch (error: any) {
+      toast.error(error.message || '批量删除失败');
+      throw error;
+    }
+  };
+
+  // 恢复药品（从回收站）
+  const restoreDrug = async (id: string) => {
+    try {
+      await drugService.restoreDrug(id);
+      const drugToRestore = deletedDrugs.find(d => d.id === id);
+      setDeletedDrugs(prev => prev.filter(d => d.id !== id));
+      
+      if (drugToRestore) {
+        const { deletedAt, deletedBy, ...cleanedDrug } = drugToRestore;
+        setDrugs(prev => [cleanedDrug as Drug, ...prev]);
+      }
+    } catch (error: any) {
+      toast.error(error.message || '恢复失败');
+      throw error;
+    }
+  };
+
+  // 彻底删除药品
+  const permanentlyDeleteDrug = async (id: string) => {
+    try {
+      await drugService.permanentlyDeleteDrug(id);
+      setDeletedDrugs(prev => prev.filter(d => d.id !== id));
+    } catch (error: any) {
+      toast.error(error.message || '删除失败');
+      throw error;
+    }
+  };
+
+  // 切换药品锁定状态
+  const toggleDrugLock = async (id: string) => {
+    try {
+      const result = await drugService.toggleDrugLock(id);
+      setDrugs(prev => prev.map(d => 
+        d.id === id ? { ...d, isLocked: result.isLocked } : d
+      ));
+    } catch (error: any) {
+      toast.error(error.message || '操作失败');
+      throw error;
+    }
+  };
+
+  // 记录销售
+  const recordSale = async (sale: SaleRecord) => {
+    try {
+      const newSale = await salesService.addSale(sale.items, sale.customerName);
+      setSales(prev => [newSale, ...prev]);
+      
+      // 更新本地库存
+      setDrugs(prev => prev.map(drug => {
+        const saleItem = sale.items.find(item => item.drugId === drug.id);
+        if (saleItem) {
+          return { ...drug, stock: drug.stock - saleItem.quantity };
         }
+        return drug;
+      }));
+    } catch (error: any) {
+      toast.error(error.message || '销售录入失败');
+      throw error;
+    }
+  };
+
+  // 更新用户信息
+  const updateUser = async (updatedUser: User) => {
+    try {
+      const updated = await userService.updateProfile({ 
+        name: updatedUser.name, 
+        password: updatedUser.password 
       });
-
-      // If there are changes, record them
-      if (changes.length > 0) {
-        const modification: ModificationLog = {
-          timestamp: new Date().toISOString(),
-          changedBy: user?.name || '未知用户',
-          changes: changes
-        };
-        
-        updatedDrug.history = [modification, ...(originalDrug.history || [])];
-      } else {
-        // Preserve history if no changes detected but update called (e.g. strict mode re-renders)
-        updatedDrug.history = originalDrug.history;
-      }
-    }
-
-    const newDrugs = drugs.map(d => d.id === updatedDrug.id ? updatedDrug : d);
-    setDrugs(newDrugs);
-    dataService.saveDrugs(newDrugs);
-  };
-
-  const deleteDrug = (id: string) => {
-    const drugToDelete = drugs.find(d => d.id === id);
-    if (!drugToDelete) return;
-
-    // Remove from active list
-    const newDrugs = drugs.filter(d => d.id !== id);
-    setDrugs(newDrugs);
-    dataService.saveDrugs(newDrugs);
-
-    // Add to deleted list with metadata
-    const deletedDrug: Drug = {
-      ...drugToDelete,
-      deletedAt: new Date().toISOString(),
-      deletedBy: user?.name || '未知用户'
-    };
-    const newDeletedDrugs = [deletedDrug, ...deletedDrugs];
-    setDeletedDrugs(newDeletedDrugs);
-    dataService.saveDeletedDrugs(newDeletedDrugs);
-  };
-
-  const batchDeleteDrugs = (ids: string[]) => {
-    // Identify drugs to delete
-    const drugsToDelete = drugs.filter(d => ids.includes(d.id));
-    
-    // Remove from active list
-    const newDrugs = drugs.filter(d => !ids.includes(d.id));
-    setDrugs(newDrugs);
-    dataService.saveDrugs(newDrugs);
-
-    // Add to deleted list with metadata
-    const now = new Date().toISOString();
-    const newDeletedItems = drugsToDelete.map(d => ({
-      ...d,
-      deletedAt: now,
-      deletedBy: user?.name || '未知用户'
-    }));
-
-    const newDeletedDrugs = [...newDeletedItems, ...deletedDrugs];
-    setDeletedDrugs(newDeletedDrugs);
-    dataService.saveDeletedDrugs(newDeletedDrugs);
-  };
-
-  const restoreDrug = (id: string) => {
-    const drugToRestore = deletedDrugs.find(d => d.id === id);
-    if (!drugToRestore) return;
-
-    // Remove from deleted list
-    const newDeletedDrugs = deletedDrugs.filter(d => d.id !== id);
-    setDeletedDrugs(newDeletedDrugs);
-    dataService.saveDeletedDrugs(newDeletedDrugs);
-
-    // Add back to active list (cleaning deletion metadata)
-    const { deletedAt, deletedBy, ...cleanedDrug } = drugToRestore;
-    const newDrugs = [cleanedDrug, ...drugs];
-    setDrugs(newDrugs);
-    dataService.saveDrugs(newDrugs);
-  };
-
-  const permanentlyDeleteDrug = (id: string) => {
-    const newDeletedDrugs = deletedDrugs.filter(d => d.id !== id);
-    setDeletedDrugs(newDeletedDrugs);
-    dataService.saveDeletedDrugs(newDeletedDrugs);
-  };
-
-  const toggleDrugLock = (id: string) => {
-    const newDrugs = drugs.map(d => 
-      d.id === id ? { ...d, isLocked: !d.isLocked } : d
-    );
-    setDrugs(newDrugs);
-    dataService.saveDrugs(newDrugs);
-  };
-
-  const recordSale = (sale: SaleRecord) => {
-    // 1. Save Sale
-    const newSales = dataService.addSale(sale);
-    setSales(newSales);
-    
-    // 2. Update Inventory
-    const updatedDrugs = [...drugs];
-    sale.items.forEach(item => {
-      const drugIndex = updatedDrugs.findIndex(d => d.id === item.drugId);
-      if (drugIndex > -1) {
-        updatedDrugs[drugIndex] = {
-          ...updatedDrugs[drugIndex],
-          stock: updatedDrugs[drugIndex].stock - item.quantity
-        };
-      }
-    });
-    setDrugs(updatedDrugs);
-    dataService.saveDrugs(updatedDrugs);
-  };
-
-  const updateUser = (updatedUser: User) => {
-    dataService.updateUser(updatedUser);
-    if (user && user.id === updatedUser.id) {
-      setUser(updatedUser);
+      setUser(prev => prev ? { ...prev, ...updated } : null);
+    } catch (error: any) {
+      toast.error(error.message || '更新失败');
+      throw error;
     }
   };
+
+  // 初始检查未完成时显示加载
+  if (!initialCheckDone) {
+    return <LoadingSpinner />;
+  }
 
   return (
     <PharmacyContext.Provider value={{ 
-      user, login, logout, 
-      drugs, deletedDrugs, sales, 
-      addDrug, batchAddDrugs, updateDrug, 
-      deleteDrug, batchDeleteDrugs, restoreDrug, permanentlyDeleteDrug,
-      toggleDrugLock, recordSale, refreshData, updateUser 
+      user, 
+      login, 
+      logout, 
+      drugs, 
+      deletedDrugs, 
+      sales, 
+      loading,
+      addDrug, 
+      batchAddDrugs, 
+      updateDrug, 
+      deleteDrug, 
+      batchDeleteDrugs, 
+      restoreDrug, 
+      permanentlyDeleteDrug,
+      toggleDrugLock, 
+      recordSale, 
+      refreshData, 
+      updateUser 
     }}>
       {children}
     </PharmacyContext.Provider>
@@ -227,8 +307,12 @@ const PharmacyProvider: React.FC<{ children: React.ReactNode }> = ({ children })
 
 // --- Protected Route Wrapper ---
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user } = usePharmacy();
+  const { user, loading } = usePharmacy();
   const location = useLocation();
+
+  if (loading) {
+    return <LoadingSpinner />;
+  }
 
   if (!user) {
     return <Navigate to="/login" state={{ from: location }} replace />;
