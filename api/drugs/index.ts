@@ -1,11 +1,14 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { prisma } from '../_lib/prisma';
-import { getAuthUser, handleCors } from '../_lib/auth';
+import { getAuthUser, cors } from '../_lib/auth';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (handleCors(req, res)) return;
+  cors(res);
+  
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
 
-  // 验证用户身份
   const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ success: false, message: '未授权访问' });
@@ -17,29 +20,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const includeDeleted = req.query.deleted === 'true';
 
       const drugs = await prisma.drug.findMany({
-        where: {
-          isDeleted: includeDeleted,
-        },
+        where: { isDeleted: includeDeleted },
         include: {
-          createdBy: {
-            select: { name: true },
-          },
-          deletedBy: {
-            select: { name: true },
-          },
+          createdBy: { select: { name: true } },
+          deletedBy: { select: { name: true } },
           history: {
-            include: {
-              changedBy: {
-                select: { name: true },
-              },
-            },
+            include: { changedBy: { select: { name: true } } },
             orderBy: { timestamp: 'desc' },
           },
         },
         orderBy: { createdAt: 'desc' },
       });
 
-      const formattedDrugs = drugs.map(drug => ({
+      const formatted = drugs.map(drug => ({
         id: drug.id,
         code: drug.code,
         name: drug.name,
@@ -56,17 +49,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         createdBy: drug.createdBy?.name || '系统',
         deletedAt: drug.deletedAt?.toISOString(),
         deletedBy: drug.deletedBy?.name,
-        history: drug.history.map(log => ({
-          timestamp: log.timestamp.toISOString(),
-          changedBy: log.changedBy.name,
-          changes: log.changes as any[],
+        history: drug.history.map(h => ({
+          timestamp: h.timestamp.toISOString(),
+          changedBy: h.changedBy.name,
+          changes: h.changes,
         })),
       }));
 
-      return res.status(200).json({ success: true, data: formattedDrugs });
-    } catch (error) {
+      return res.status(200).json({ success: true, data: formatted });
+    } catch (error: any) {
       console.error('Get drugs error:', error);
-      return res.status(500).json({ success: false, message: '获取药品列表失败' });
+      return res.status(500).json({ success: false, message: '获取药品失败: ' + error.message });
     }
   }
 
@@ -74,39 +67,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'POST') {
     try {
       const body = req.body;
-      
-      // 批量添加
+
       if (Array.isArray(body)) {
         const drugs = await Promise.all(
-          body.map(async (drugData: any) => {
-            return prisma.drug.create({
+          body.map((d: any) =>
+            prisma.drug.create({
               data: {
-                code: drugData.code,
-                name: drugData.name,
-                category: drugData.category,
-                manufacturer: drugData.manufacturer,
-                price: parseFloat(drugData.price),
-                stock: parseInt(drugData.stock),
-                minStockThreshold: parseInt(drugData.minStockThreshold) || 10,
-                expiryDate: new Date(drugData.expiryDate),
-                description: drugData.description || null,
-                sideEffects: drugData.sideEffects || null,
-                isLocked: drugData.isLocked || false,
+                code: d.code,
+                name: d.name,
+                category: d.category,
+                manufacturer: d.manufacturer,
+                price: parseFloat(d.price),
+                stock: parseInt(d.stock),
+                minStockThreshold: parseInt(d.minStockThreshold) || 10,
+                expiryDate: new Date(d.expiryDate),
+                description: d.description || null,
                 createdById: user.userId,
               },
-            });
-          })
+            })
+          )
         );
-
-        return res.status(200).json({ 
-          success: true, 
-          data: drugs, 
-          message: `成功添加 ${drugs.length} 个药品` 
-        });
+        return res.status(200).json({ success: true, data: drugs, message: `添加了 ${drugs.length} 个药品` });
       }
 
-      // 单个添加
-      const { code, name, category, manufacturer, price, stock, minStockThreshold, expiryDate, description, sideEffects, isLocked } = body;
+      const { code, name, category, manufacturer, price, stock, minStockThreshold, expiryDate, description } = body;
 
       const existing = await prisma.drug.findUnique({ where: { code } });
       if (existing) {
@@ -124,8 +108,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           minStockThreshold: parseInt(minStockThreshold) || 10,
           expiryDate: new Date(expiryDate),
           description: description || null,
-          sideEffects: sideEffects || null,
-          isLocked: isLocked || false,
           createdById: user.userId,
         },
       });
@@ -134,26 +116,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         success: true,
         message: '药品添加成功',
         data: {
-          id: drug.id,
-          code: drug.code,
-          name: drug.name,
-          category: drug.category,
-          manufacturer: drug.manufacturer,
-          price: drug.price,
-          stock: drug.stock,
-          minStockThreshold: drug.minStockThreshold,
+          ...drug,
           expiryDate: drug.expiryDate.toISOString().split('T')[0],
-          description: drug.description,
-          isLocked: drug.isLocked,
           createdAt: drug.createdAt.toISOString(),
           createdBy: user.name,
           history: [],
         },
       });
-
-    } catch (error) {
+    } catch (error: any) {
       console.error('Add drug error:', error);
-      return res.status(500).json({ success: false, message: '添加药品失败' });
+      return res.status(500).json({ success: false, message: '添加药品失败: ' + error.message });
     }
   }
 

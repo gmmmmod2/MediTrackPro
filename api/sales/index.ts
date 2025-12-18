@@ -1,14 +1,14 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { prisma } from '../_lib/prisma';
-import { getAuthUser, handleCors } from '../_lib/auth';
+import { getAuthUser, cors } from '../_lib/auth';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (handleCors(req, res)) return;
+  cors(res);
+  
+  if (req.method === 'OPTIONS') return res.status(200).end();
 
   const user = await getAuthUser(req);
-  if (!user) {
-    return res.status(401).json({ success: false, message: '未授权访问' });
-  }
+  if (!user) return res.status(401).json({ success: false, message: '未授权访问' });
 
   // GET - 获取销售记录
   if (req.method === 'GET') {
@@ -18,76 +18,57 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const sales = await prisma.saleRecord.findMany({
         include: {
-          cashier: {
-            select: { name: true },
-          },
-          items: {
-            include: {
-              drug: {
-                select: { name: true, code: true },
-              },
-            },
-          },
+          cashier: { select: { name: true } },
+          items: { include: { drug: { select: { name: true } } } },
         },
         orderBy: { timestamp: 'desc' },
         take: limit,
         skip: offset,
       });
 
-      const formattedSales = sales.map(sale => ({
-        id: sale.id,
-        timestamp: sale.timestamp.toISOString(),
-        totalAmount: sale.totalAmount,
-        cashierName: sale.cashier.name,
-        customerName: sale.customerName,
-        items: sale.items.map(item => ({
-          drugId: item.drugId,
-          drugName: item.drug.name,
-          quantity: item.quantity,
-          priceAtSale: item.priceAtSale,
-          total: item.total,
+      const formatted = sales.map(s => ({
+        id: s.id,
+        timestamp: s.timestamp.toISOString(),
+        totalAmount: s.totalAmount,
+        cashierName: s.cashier.name,
+        customerName: s.customerName,
+        items: s.items.map(i => ({
+          drugId: i.drugId,
+          drugName: i.drug.name,
+          quantity: i.quantity,
+          priceAtSale: i.priceAtSale,
+          total: i.total,
         })),
       }));
 
-      return res.status(200).json({ success: true, data: formattedSales });
-    } catch (error) {
+      return res.status(200).json({ success: true, data: formatted });
+    } catch (error: any) {
       console.error('Get sales error:', error);
-      return res.status(500).json({ success: false, message: '获取销售记录失败' });
+      return res.status(500).json({ success: false, message: '获取销售记录失败: ' + error.message });
     }
   }
 
-  // POST - 创建销售记录
+  // POST - 创建销售
   if (req.method === 'POST') {
     try {
-      const { items, customerName } = req.body;
+      const { items, customerName } = req.body || {};
 
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ success: false, message: '购物车不能为空' });
       }
 
-      // 验证库存并计算总额
       let totalAmount = 0;
       const validatedItems: any[] = [];
 
       for (const item of items) {
-        const drug = await prisma.drug.findUnique({
-          where: { id: item.drugId },
-        });
-
-        if (!drug) {
-          return res.status(400).json({ success: false, message: `药品不存在: ${item.drugId}` });
-        }
-
+        const drug = await prisma.drug.findUnique({ where: { id: item.drugId } });
+        if (!drug) return res.status(400).json({ success: false, message: `药品不存在: ${item.drugId}` });
         if (drug.stock < item.quantity) {
-          return res.status(400).json({ 
-            success: false, 
-            message: `${drug.name} 库存不足，仅剩 ${drug.stock} 件` 
-          });
+          return res.status(400).json({ success: false, message: `${drug.name} 库存不足` });
         }
 
         const itemTotal = drug.price * item.quantity;
         totalAmount += itemTotal;
-
         validatedItems.push({
           drugId: drug.id,
           drugName: drug.name,
@@ -97,40 +78,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
-      // 创建事务
       const sale = await prisma.$transaction(async (tx) => {
-        // 1. 创建销售记录
-        const saleRecord = await tx.saleRecord.create({
+        const record = await tx.saleRecord.create({
           data: {
             totalAmount,
             customerName: customerName || '散客',
             cashierId: user.userId,
             items: {
-              create: validatedItems.map(item => ({
-                drugId: item.drugId,
-                quantity: item.quantity,
-                priceAtSale: item.priceAtSale,
-                total: item.total,
+              create: validatedItems.map(i => ({
+                drugId: i.drugId,
+                quantity: i.quantity,
+                priceAtSale: i.priceAtSale,
+                total: i.total,
               })),
             },
           },
-          include: {
-            items: true,
-            cashier: { select: { name: true } },
-          },
+          include: { cashier: { select: { name: true } } },
         });
 
-        // 2. 更新库存
         for (const item of validatedItems) {
           await tx.drug.update({
             where: { id: item.drugId },
-            data: {
-              stock: { decrement: item.quantity },
-            },
+            data: { stock: { decrement: item.quantity } },
           });
         }
 
-        return saleRecord;
+        return record;
       });
 
       return res.status(200).json({
@@ -145,10 +118,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           items: validatedItems,
         },
       });
-
-    } catch (error) {
+    } catch (error: any) {
       console.error('Create sale error:', error);
-      return res.status(500).json({ success: false, message: '销售录入失败' });
+      return res.status(500).json({ success: false, message: '销售录入失败: ' + error.message });
     }
   }
 
