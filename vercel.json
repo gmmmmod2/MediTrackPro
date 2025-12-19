@@ -1,7 +1,8 @@
 {
-  "buildCommand": "npx prisma generate && vite build",
+  "buildCommand": "prisma generate && vite build",
   "outputDirectory": "dist",
   "installCommand": "npm install",
+  "framework": null,
   "functions": {
     "api/**/*.ts": {
       "memory": 1024,
