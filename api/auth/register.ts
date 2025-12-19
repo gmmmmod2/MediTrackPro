@@ -1,9 +1,14 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { PrismaClient } from '@prisma/client';
-import { cors } from '../_lib/auth';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
+
+function cors(res: VercelResponse) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   cors(res);

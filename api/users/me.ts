@@ -1,9 +1,28 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { PrismaClient } from '@prisma/client';
-import { getAuthUser, cors } from '../_lib/auth';
+import { jwtVerify } from 'jose';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
+
+const getJwtSecret = () => new TextEncoder().encode(process.env.JWT_SECRET || 'default-secret-change-me');
+
+function cors(res: VercelResponse) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+}
+
+async function getAuthUser(req: VercelRequest) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) return null;
+  try {
+    const { payload } = await jwtVerify(authHeader.substring(7), getJwtSecret());
+    return payload as any;
+  } catch {
+    return null;
+  }
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   cors(res);

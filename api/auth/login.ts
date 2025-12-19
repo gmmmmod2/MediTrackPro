@@ -1,9 +1,20 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { PrismaClient } from '@prisma/client';
-import { signToken, cors } from '../_lib/auth';
+import { SignJWT } from 'jose';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
+
+const getJwtSecret = () => {
+  const secret = process.env.JWT_SECRET || 'default-secret-change-me';
+  return new TextEncoder().encode(secret);
+};
+
+function cors(res: VercelResponse) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   cors(res);
@@ -36,12 +47,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(401).json({ success: false, message: '用户名或密码错误' });
     }
 
-    const token = await signToken({
+    const token = await new SignJWT({
       userId: user.id,
       username: user.username,
       role: user.role,
       name: user.name,
-    });
+    })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt()
+      .setExpirationTime('7d')
+      .sign(getJwtSecret());
 
     return res.status(200).json({
       success: true,
