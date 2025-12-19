@@ -1,15 +1,16 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // 首先检查环境变量
   const envCheck = {
     hasDbUrl: !!process.env.DATABASE_URL,
     hasJwtSecret: !!process.env.JWT_SECRET,
-    dbUrlPrefix: process.env.DATABASE_URL?.substring(0, 30) + '...',
     nodeEnv: process.env.NODE_ENV,
   };
 
@@ -22,9 +23,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // 动态导入 prisma 以便捕获导入错误
-    const { prisma } = await import('./_lib/prisma');
-    
     const [userCount, drugCount, saleCount] = await Promise.all([
       prisma.user.count(),
       prisma.drug.count(),
@@ -49,7 +47,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       success: false,
       message: '数据库连接失败',
       error: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
       env: envCheck,
     });
   }
