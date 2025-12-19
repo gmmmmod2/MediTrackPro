@@ -1,22 +1,23 @@
-
-import { GoogleGenAI } from "@google/genai";
+import OpenAI from "openai";
 import { Drug, SaleRecord } from "../types";
 
-// Initialize Gemini Client
-// Assumption: process.env.API_KEY is available in the environment
-const apiKey = process.env.API_KEY || '';
-let aiClient: GoogleGenAI | null = null;
+// Initialize DeepSeek Client (使用 OpenAI SDK)
+const apiKey = process.env.DEEPSEEK_API_KEY || '';
+let aiClient: OpenAI | null = null;
 
 try {
   if (apiKey) {
-    aiClient = new GoogleGenAI({ apiKey });
+    aiClient = new OpenAI({
+      baseURL: 'https://api.deepseek.com',
+      apiKey: apiKey,
+    });
   }
 } catch (error) {
-  console.error("Failed to initialize Gemini client", error);
+  console.error("Failed to initialize DeepSeek client", error);
 }
 
 export const analyzeInventory = async (drugs: Drug[], sales: SaleRecord[]): Promise<string> => {
-  if (!aiClient) return "AI 服务未配置 (缺少 API Key)。";
+  if (!aiClient) return "AI 服务未配置 (缺少 DEEPSEEK_API_KEY)。";
 
   const lowStock = drugs.filter(d => d.stock <= d.minStockThreshold).map(d => `${d.name} (剩余 ${d.stock})`);
   const recentSales = sales.slice(0, 10);
@@ -38,13 +39,16 @@ export const analyzeInventory = async (drugs: Drug[], sales: SaleRecord[]): Prom
   `;
 
   try {
-    const response = await aiClient.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
+    const completion = await aiClient.chat.completions.create({
+      model: "deepseek-chat",
+      messages: [
+        { role: "system", content: "你是一个专业的药房库存分析师，请用中文回答。" },
+        { role: "user", content: prompt }
+      ],
     });
-    return response.text || "未生成分析结果。";
+    return completion.choices[0]?.message?.content || "未生成分析结果。";
   } catch (error) {
-    console.error("Gemini API Error:", error);
+    console.error("DeepSeek API Error:", error);
     return "暂时无法生成 AI 分析。请检查您的网络连接。";
   }
 };
@@ -55,12 +59,16 @@ export const getDrugInfo = async (drugName: string): Promise<string> => {
   const prompt = `请用中文简要总结（最多2句话）${drugName} 的主要用途和一个常见副作用。保持专业语气。`;
 
   try {
-    const response = await aiClient.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
+    const completion = await aiClient.chat.completions.create({
+      model: "deepseek-chat",
+      messages: [
+        { role: "system", content: "你是一个专业的药剂师助手，请用中文回答。" },
+        { role: "user", content: prompt }
+      ],
     });
-    return response.text || "信息不可用。";
+    return completion.choices[0]?.message?.content || "信息不可用。";
   } catch (e) {
+    console.error("DeepSeek API Error:", e);
     return "信息不可用。";
   }
-}
+};

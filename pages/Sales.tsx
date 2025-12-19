@@ -4,7 +4,7 @@ import { usePharmacy } from '../App';
 import { Drug, SaleItem, SaleRecord } from '../types';
 import { Plus, Trash, Search, ShoppingCart, CheckCircle, Info, History, X, FileText, User, Calendar } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getDrugInfo } from '../services/geminiService';
+import { getDrugInfo } from '../services/deepseekService';
 
 // --- Shared Constants ---
 const inputClassName = "w-full border border-slate-300 bg-white rounded-lg p-2.5 text-slate-800 focus:ring-2 focus:ring-primary-500 outline-none transition-all shadow-sm";

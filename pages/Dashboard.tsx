@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { usePharmacy } from '../App';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { DollarSign, AlertTriangle, Package, TrendingUp, Sparkles, Loader2 } from 'lucide-react';
-import { analyzeInventory } from '../services/geminiService';
+import { analyzeInventory } from '../services/deepseekService';
 
 const Dashboard: React.FC = () => {
   const { drugs, sales } = usePharmacy();
