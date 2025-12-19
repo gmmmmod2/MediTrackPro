@@ -1,14 +1,21 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { usePharmacy } from '../App';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
-import { DollarSign, AlertTriangle, Package, TrendingUp, Sparkles, Loader2 } from 'lucide-react';
-import { analyzeInventory } from '../services/deepseekService';
+import { DollarSign, AlertTriangle, Package, TrendingUp, Sparkles, Loader2, X, Send, MessageCircle, Bot, User } from 'lucide-react';
+import { analyzeInventory, chatWithAI, ChatMessage } from '../services/deepseekService';
 
 const Dashboard: React.FC = () => {
   const { drugs, sales } = usePharmacy();
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  
+  // 对话相关状态
+  const [showChatModal, setShowChatModal] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [inputMessage, setInputMessage] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   // --- Statistics Calculation ---
   const totalRevenue = sales.reduce((acc, sale) => acc + sale.totalAmount, 0);
@@ -18,7 +25,6 @@ const Dashboard: React.FC = () => {
   const totalInventoryValue = drugs.reduce((acc, drug) => acc + (drug.price * drug.stock), 0);
 
   // Prepare chart data (Aggregate sales by Date)
-  // Logic: Group by date string, sum amounts, then sort by date
   const salesByDate = sales.reduce((acc, sale) => {
     const dateKey = new Date(sale.timestamp).toLocaleDateString('zh-CN');
     acc[dateKey] = (acc[dateKey] || 0) + sale.totalAmount;
@@ -27,11 +33,11 @@ const Dashboard: React.FC = () => {
 
   const salesChartData = Object.keys(salesByDate)
     .map(date => ({
-      date: date, // Full date string for sorting and tooltip (e.g., 2023/10/24)
+      date: date,
       amount: salesByDate[date]
     }))
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-    .slice(-7); // Keep last 7 days with activity
+    .slice(-7);
 
   // Prepare inventory category data
   const categoryData: Record<string, number> = {};
@@ -43,10 +49,62 @@ const Dashboard: React.FC = () => {
     count: categoryData[key]
   }));
 
-  const handleAiAnalysis = async () => {
+  // 滚动到最新消息
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages]);
+
+  // 打开对话并生成初始分析
+  const handleOpenChat = async () => {
+    setShowChatModal(true);
+    if (chatMessages.length === 0) {
+      setIsAnalyzing(true);
+      const result = await analyzeInventory(drugs, sales);
+      setChatMessages([{ role: 'assistant', content: `您好！我是药智通，您的药房AI助手。\n\n以下是当前运营分析：\n\n${result}\n\n请问还有什么我可以帮您的吗？` }]);
+      setIsAnalyzing(false);
+    }
+  };
+
+  // 发送消息
+  const handleSendMessage = async () => {
+    if (!inputMessage.trim() || isSending) return;
+    
+    const userMessage = inputMessage.trim();
+    setInputMessage('');
+    
+    // 添加用户消息
+    const newMessages: ChatMessage[] = [...chatMessages, { role: 'user', content: userMessage }];
+    setChatMessages(newMessages);
+    
+    setIsSending(true);
+    try {
+      const response = await chatWithAI(newMessages, { drugs, sales });
+      setChatMessages([...newMessages, { role: 'assistant', content: response }]);
+    } catch (error) {
+      setChatMessages([...newMessages, { role: 'assistant', content: '抱歉，我暂时无法回复，请稍后重试。' }]);
+    }
+    setIsSending(false);
+  };
+
+  // 处理回车发送
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  // 关闭对话
+  const handleCloseChat = () => {
+    setShowChatModal(false);
+  };
+
+  // 清空对话
+  const handleClearChat = async () => {
+    setChatMessages([]);
     setIsAnalyzing(true);
     const result = await analyzeInventory(drugs, sales);
-    setAiAnalysis(result);
+    setChatMessages([{ role: 'assistant', content: `您好！我是药智通，您的药房AI助手。\n\n以下是当前运营分析：\n\n${result}\n\n请问还有什么我可以帮您的吗？` }]);
     setIsAnalyzing(false);
   };
 
@@ -58,31 +116,13 @@ const Dashboard: React.FC = () => {
           <p className="text-slate-500 mt-1">药房运营表现与库存健康概览。</p>
         </div>
         <button 
-          onClick={handleAiAnalysis}
-          disabled={isAnalyzing}
-          className="hidden md:flex items-center space-x-2 bg-gradient-to-r from-violet-600 to-indigo-600 text-white px-4 py-2 rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-70"
+          onClick={handleOpenChat}
+          className="hidden md:flex items-center space-x-2 bg-gradient-to-r from-violet-600 to-indigo-600 text-white px-4 py-2 rounded-lg shadow-lg hover:shadow-xl transition-all"
         >
-          {isAnalyzing ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-5 w-5" />}
-          <span>{isAnalyzing ? '分析中...' : 'AI 智能运营分析'}</span>
+          <Sparkles className="h-5 w-5" />
+          <span>AI 智能运营分析</span>
         </button>
       </div>
-
-      {/* AI Analysis Result Card */}
-      {aiAnalysis && (
-        <div className="bg-gradient-to-br from-violet-50 to-indigo-50 border border-violet-100 rounded-xl p-6 shadow-sm animate-fade-in">
-           <div className="flex items-center space-x-2 mb-4 text-violet-700">
-             <Sparkles className="h-5 w-5" />
-             <h3 className="font-semibold text-lg">AI 战略摘要</h3>
-           </div>
-           <div className="prose prose-violet max-w-none text-slate-700">
-             <ul className="list-disc pl-5 space-y-2">
-               {aiAnalysis.split('\n').filter(line => line.trim().length > 0).map((line, idx) => (
-                 <li key={idx} className="leading-relaxed">{line.replace(/^- /, '')}</li>
-               ))}
-             </ul>
-           </div>
-        </div>
-      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -161,16 +201,120 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
       
-       {/* Mobile AI Button (Sticky) */}
-       <div className="md:hidden fixed bottom-6 right-6 z-40">
+      {/* Mobile AI Button (Sticky) */}
+      <div className="md:hidden fixed bottom-6 right-6 z-40">
         <button 
-           onClick={handleAiAnalysis}
-           className="bg-violet-600 text-white p-4 rounded-full shadow-lg hover:bg-violet-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-violet-500"
+          onClick={handleOpenChat}
+          className="bg-violet-600 text-white p-4 rounded-full shadow-lg hover:bg-violet-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-violet-500"
         >
-          {isAnalyzing ? <Loader2 className="h-6 w-6 animate-spin" /> : <Sparkles className="h-6 w-6" />}
+          <Sparkles className="h-6 w-6" />
         </button>
       </div>
 
+      {/* AI Chat Modal */}
+      {showChatModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl h-[600px] max-h-[80vh] flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-violet-600 to-indigo-600 text-white px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="bg-white/20 p-2 rounded-lg">
+                  <Bot className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-lg">药智通 AI 助手</h3>
+                  <p className="text-violet-200 text-sm">智能运营分析与问答</p>
+                </div>
+              </div>
+              <div className="flex items-center space-x-2">
+                <button 
+                  onClick={handleClearChat}
+                  className="text-violet-200 hover:text-white text-sm px-3 py-1 rounded-lg hover:bg-white/10 transition-colors"
+                >
+                  清空对话
+                </button>
+                <button 
+                  onClick={handleCloseChat}
+                  className="text-violet-200 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors"
+                >
+                  <X className="h-6 w-6" />
+                </button>
+              </div>
+            </div>
+            
+            {/* Chat Messages */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50">
+              {isAnalyzing && chatMessages.length === 0 ? (
+                <div className="flex items-center justify-center h-full">
+                  <div className="text-center">
+                    <Loader2 className="h-8 w-8 animate-spin text-violet-600 mx-auto mb-2" />
+                    <p className="text-slate-500">正在分析运营数据...</p>
+                  </div>
+                </div>
+              ) : (
+                chatMessages.map((msg, idx) => (
+                  <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`flex items-start space-x-2 max-w-[80%] ${msg.role === 'user' ? 'flex-row-reverse space-x-reverse' : ''}`}>
+                      <div className={`p-2 rounded-full ${msg.role === 'user' ? 'bg-violet-600' : 'bg-slate-200'}`}>
+                        {msg.role === 'user' ? (
+                          <User className="h-4 w-4 text-white" />
+                        ) : (
+                          <Bot className="h-4 w-4 text-slate-600" />
+                        )}
+                      </div>
+                      <div className={`px-4 py-3 rounded-2xl ${
+                        msg.role === 'user' 
+                          ? 'bg-violet-600 text-white rounded-tr-md' 
+                          : 'bg-white text-slate-700 shadow-sm border border-slate-100 rounded-tl-md'
+                      }`}>
+                        <p className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+              {isSending && (
+                <div className="flex justify-start">
+                  <div className="flex items-start space-x-2">
+                    <div className="p-2 rounded-full bg-slate-200">
+                      <Bot className="h-4 w-4 text-slate-600" />
+                    </div>
+                    <div className="px-4 py-3 rounded-2xl bg-white shadow-sm border border-slate-100 rounded-tl-md">
+                      <Loader2 className="h-5 w-5 animate-spin text-violet-600" />
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+            
+            {/* Input Area */}
+            <div className="border-t border-slate-200 p-4 bg-white">
+              <div className="flex items-center space-x-3">
+                <input
+                  type="text"
+                  value={inputMessage}
+                  onChange={(e) => setInputMessage(e.target.value)}
+                  onKeyPress={handleKeyPress}
+                  placeholder="输入您的问题，例如：哪些药品需要补货？"
+                  className="flex-1 border border-slate-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent text-sm"
+                  disabled={isSending || isAnalyzing}
+                />
+                <button
+                  onClick={handleSendMessage}
+                  disabled={!inputMessage.trim() || isSending || isAnalyzing}
+                  className="bg-violet-600 text-white p-3 rounded-xl hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  <Send className="h-5 w-5" />
+                </button>
+              </div>
+              <p className="text-xs text-slate-400 mt-2 text-center">
+                AI 助手基于当前药房数据提供建议，仅供参考
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
